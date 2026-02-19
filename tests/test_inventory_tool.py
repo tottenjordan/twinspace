@@ -1,7 +1,14 @@
 import uuid
-import pytest
 from unittest.mock import MagicMock
-from app.tools.inventory import ApplianceInventory, get_inventory_summary, confirm_appliance_detection, update_appliance_details
+
+import pytest
+
+from app.tools.inventory import (
+    ApplianceInventory,
+    confirm_appliance_detection,
+    get_inventory_summary,
+    update_appliance_details,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -29,8 +36,7 @@ def test_inventory_singleton():
     assert len(inv2.appliances) == 1
 
 
-@pytest.mark.asyncio
-async def test_confirm_appliance_detection_accept():
+def test_confirm_appliance_detection_accept():
     """Test confirming a detected appliance."""
     inventory = ApplianceInventory()
     inventory.pending_appliance = {
@@ -54,8 +60,7 @@ async def test_confirm_appliance_detection_accept():
     assert inventory.pending_appliance["status"] == "needs_details"
 
 
-@pytest.mark.asyncio
-async def test_confirm_appliance_detection_reject():
+def test_confirm_appliance_detection_reject():
     """Test rejecting a detected appliance."""
     inventory = ApplianceInventory()
     inventory.pending_appliance = {"type": "dishwasher"}
@@ -72,8 +77,7 @@ async def test_confirm_appliance_detection_reject():
     assert inventory.pending_appliance is None
 
 
-@pytest.mark.asyncio
-async def test_update_appliance_details():
+def test_update_appliance_details():
     """Test updating appliance with make and model."""
     inventory = ApplianceInventory()
     appliance_id = str(uuid.uuid4())
@@ -97,3 +101,64 @@ async def test_update_appliance_details():
     assert inventory.appliances[0]["make"] == "Samsung"
     assert inventory.appliances[0]["model"] == "NE58F9500SS"
     assert inventory.pending_appliance is None
+
+
+def test_confirm_appliance_detection_no_pending():
+    """Test confirming when no appliance is pending."""
+    inventory = ApplianceInventory()
+    inventory.pending_appliance = None
+
+    context = MagicMock()
+    context.state = {}
+
+    result = confirm_appliance_detection(True, context)
+
+    assert result["status"] == "error"
+    assert "No pending appliance" in result["message"]
+
+
+def test_update_appliance_details_no_pending():
+    """Test updating details when no appliance is pending."""
+    inventory = ApplianceInventory()
+    inventory.pending_appliance = None
+
+    context = MagicMock()
+    context.state = {"current_appliance_id": "some-id"}
+
+    result = update_appliance_details("Samsung", "ABC123", context)
+
+    assert result["status"] == "error"
+    assert "No matching pending appliance" in result["message"]
+
+
+def test_update_appliance_details_id_mismatch():
+    """Test updating details when appliance ID doesn't match."""
+    inventory = ApplianceInventory()
+    inventory.pending_appliance = {
+        "id": "correct-id",
+        "type": "oven",
+        "status": "needs_details"
+    }
+
+    context = MagicMock()
+    context.state = {"current_appliance_id": "wrong-id"}
+
+    result = update_appliance_details("Samsung", "ABC123", context)
+
+    assert result["status"] == "error"
+    assert "No matching pending appliance" in result["message"]
+
+
+def test_get_inventory_summary_with_appliances():
+    """Test getting summary with appliances in inventory."""
+    inventory = ApplianceInventory()
+    inventory.appliances = [
+        {"id": "1", "type": "oven", "make": "GE", "model": "ABC"},
+        {"id": "2", "type": "fridge", "make": "Samsung", "model": "XYZ"}
+    ]
+
+    result = get_inventory_summary()
+
+    assert result["status"] == "success"
+    assert result["total_appliances"] == 2
+    assert len(result["appliances"]) == 2
