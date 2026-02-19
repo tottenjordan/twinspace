@@ -1,0 +1,21 @@
+# .dockerignore
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.git/
+.gitignore
+tests/
+.env
+README.md
+DEPLOYMENT.md
+docs/
