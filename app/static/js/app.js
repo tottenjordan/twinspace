@@ -71,6 +71,8 @@ class ApplianceInventoryApp {
     }
 
     async connect() {
+        // Generate new session ID for each connection to start fresh
+        this.sessionId = `session_${Date.now()}`;
         const wsUrl = `ws://${window.location.host}/ws/${this.userId}/${this.sessionId}`;
 
         try {
@@ -82,7 +84,7 @@ class ApplianceInventoryApp {
                 document.getElementById('disconnectBtn').disabled = false;
                 document.getElementById('pushToTalkBtn').disabled = false;
 
-                this.updateStatus('Connected to AI assistant - waiting for greeting');
+                this.updateStatus('Connected and ready - Agent is listening');
 
                 // Start audio recording
                 this.audioRecorder.start();
@@ -155,7 +157,10 @@ class ApplianceInventoryApp {
 
         // Handle output transcription (Live API text)
         // Only show final transcription to avoid partial/duplicate messages
-        if (event.output_transcription?.text && event.output_transcription.finished === true) {
+        // Filter out empty transcriptions
+        if (event.output_transcription?.text &&
+            event.output_transcription.finished === true &&
+            event.output_transcription.text.trim().length > 0) {
             console.log('Final transcription from agent:', event.output_transcription.text);
             this.addMessage('agent', event.output_transcription.text);
             this.updateStatus('Agent responded');

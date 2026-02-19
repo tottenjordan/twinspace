@@ -34,6 +34,13 @@ def detect_appliance(appliance_type: str, tool_context: ToolContext) -> dict[str
     Returns:
         Dictionary with detection status.
     """
+    # GUARD: Only allow detection after user has spoken
+    if not tool_context.state.get("user_has_spoken", False):
+        return {
+            "status": "error",
+            "message": "Wait for user to speak before detecting appliances."
+        }
+
     inventory = ApplianceInventory()
 
     # Don't overwrite pending appliance
@@ -56,12 +63,22 @@ def detect_appliance(appliance_type: str, tool_context: ToolContext) -> dict[str
     }
 
 
-def get_inventory_summary() -> dict[str, Any]:
+def get_inventory_summary(tool_context: ToolContext) -> dict[str, Any]:
     """Get current inventory summary.
+
+    Args:
+        tool_context: ADK tool context for state management.
 
     Returns:
         Dictionary containing total count and appliance list.
     """
+    # GUARD: Only allow if user has explicitly asked
+    if not tool_context.state.get("user_has_spoken", False):
+        return {
+            "status": "error",
+            "message": "Wait for user to speak before checking inventory."
+        }
+
     inventory = ApplianceInventory()
     return {
         "status": "success",
@@ -150,8 +167,9 @@ def update_appliance_details(
     inventory.appliances.append(inventory.pending_appliance.copy())
     inventory.pending_appliance = None
 
-    # Clear from context
-    tool_context.state.pop("current_appliance_id", None)
+    # Clear from context (State doesn't have pop, use del if key exists)
+    if "current_appliance_id" in tool_context.state:
+        del tool_context.state["current_appliance_id"]
 
     return {
         "status": "completed",

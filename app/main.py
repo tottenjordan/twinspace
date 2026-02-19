@@ -106,7 +106,7 @@ async def websocket_endpoint(
         app_name=APP_NAME,
         user_id=user_id,
         session_id=session_id,
-        state={}
+        state={"user_has_spoken": False}  # Track user interaction for certain tools
     )
     print(f"Session created successfully: {session_id}")
 
@@ -117,36 +117,34 @@ async def websocket_endpoint(
     response_modalities = [Modality.AUDIO] if is_native_audio_model(model_name) else [Modality.TEXT]
 
     # Create RunConfig for Live API
+    # Note: session_resumption removed so each connection starts fresh
     run_config = RunConfig(
         streaming_mode=StreamingMode.BIDI,
         response_modalities=response_modalities,
-        session_resumption=types.SessionResumptionConfig(),
         enable_affective_dialog=affective_dialog,
     )
 
-    # Add proactivity config if enabled
-    if proactivity:
-        run_config.proactivity = types.ProactivityConfig()
+    # Disable proactivity for push-to-talk - agent should only respond when user speaks
+    # if proactivity:
+    #     run_config.proactivity = types.ProactivityConfig()
 
     # Create LiveRequestQueue for message passing
     live_request_queue = LiveRequestQueue()
+
+    # Send initial greeting to trigger agent introduction
+    live_request_queue.send_content(
+        genai.types.Content(
+            role="user",
+            parts=[genai.types.Part(text="Hi")]
+        )
+    )
+    print("Sent initial greeting to agent")
 
     async def upstream_task():
         """Receive messages from client and forward to agent."""
         try:
             print("Upstream: Starting message receive loop...")
-
-            # Send a simple greeting trigger to start the conversation
-            # This helps the agent know it should introduce itself
-            await asyncio.sleep(0.5)  # Small delay to ensure connection is ready
-            live_request_queue.send_content(
-                genai.types.Content(
-                    role="user",
-                    parts=[genai.types.Part(text="Hi")]
-                )
-            )
-            live_request_queue.send_activity_end()
-            print("Upstream: Sent initial greeting trigger")
+            print("Upstream: Waiting for user input (push-to-talk)...")
 
             while True:
                 message = await websocket.receive()
@@ -182,6 +180,16 @@ async def websocket_endpoint(
                     elif data["type"] == "activity_end":
                         # User stopped talking (push-to-talk released)
                         print("\n>>> User stopped talking (push-to-talk released)")
+
+                        # Activate the session - allow tools to run now that user has spoken
+                        session = await session_service.get_session(
+                            app_name=APP_NAME,
+                            user_id=user_id,
+                            session_id=session_id
+                        )
+                        session.state["user_has_spoken"] = True
+                        print(">>> Session activated - tools now enabled")
+
                         live_request_queue.send_activity_end()
                         print(">>> Activity end signal sent to Live API")
                         print(">>> Waiting for agent response...\n")
