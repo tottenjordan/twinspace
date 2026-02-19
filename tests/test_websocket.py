@@ -1,5 +1,4 @@
 # tests/test_websocket.py
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -17,11 +16,10 @@ def test_static_files_mounted():
     assert response.status_code == 200
 
 
-@pytest.mark.asyncio
-async def test_websocket_endpoint_exists():
-    """Test that WebSocket endpoint is defined."""
+def test_websocket_endpoint_exists():
+    """Test that WebSocket endpoint accepts connections."""
     client = TestClient(app)
-    # Try to connect to WebSocket
-    with pytest.raises(Exception):  # Will fail until we implement
-        with client.websocket_connect("/ws/test_user/test_session"):
-            pass
+    # WebSocket should accept connection
+    with client.websocket_connect("/ws/test_user/test_session") as websocket:
+        # Connection successful
+        assert websocket is not None

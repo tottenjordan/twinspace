@@ -1,3 +1,6 @@
+# Claude Code
+.claude/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -22,6 +25,8 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
+
+.ruff_cache/
 
 # Build
 dist/

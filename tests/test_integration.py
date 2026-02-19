@@ -13,7 +13,7 @@ def test_agent_appliance_detection_workflow():
     """Test complete appliance detection workflow."""
     # Agent should be properly configured
     assert root_agent is not None
-    assert len(root_agent.tools) == 4
+    assert len(root_agent.tools) == 6
 
 
 def test_full_inventory_cycle():

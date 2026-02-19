@@ -15,8 +15,10 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
+from google.genai.types import Modality
 
 from app.appliance_agent import root_agent
+from app.tools.video_monitor import VideoFrameBuffer
 
 # Load environment variables
 load_dotenv()
@@ -83,7 +85,7 @@ async def websocket_endpoint(
     websocket: WebSocket,
     user_id: str,
     session_id: str,
-    proactivity: bool | None = Query(default=False),
+    proactivity: bool | None = Query(default=True),
     affective_dialog: bool | None = Query(default=False),
 ):
     """
@@ -98,9 +100,21 @@ async def websocket_endpoint(
     """
     await websocket.accept()
 
+    # Create session explicitly before starting live stream
+    print(f"Creating session: user={user_id}, session={session_id}")
+    await session_service.create_session(
+        app_name=APP_NAME,
+        user_id=user_id,
+        session_id=session_id,
+        state={}
+    )
+    print(f"Session created successfully: {session_id}")
+
     # Determine response modality based on model
+    # Note: Live API only allows ONE response modality
+    # For native audio models, use AUDIO - text transcriptions come via output_transcription
     model_name = root_agent.model
-    response_modalities = ["AUDIO"] if is_native_audio_model(model_name) else ["TEXT"]
+    response_modalities = [Modality.AUDIO] if is_native_audio_model(model_name) else [Modality.TEXT]
 
     # Create RunConfig for Live API
     run_config = RunConfig(
@@ -120,38 +134,79 @@ async def websocket_endpoint(
     async def upstream_task():
         """Receive messages from client and forward to agent."""
         try:
+            print("Upstream: Starting message receive loop...")
+
+            # Send a simple greeting trigger to start the conversation
+            # This helps the agent know it should introduce itself
+            await asyncio.sleep(0.5)  # Small delay to ensure connection is ready
+            live_request_queue.send_content(
+                genai.types.Content(
+                    role="user",
+                    parts=[genai.types.Part(text="Hi")]
+                )
+            )
+            live_request_queue.send_activity_end()
+            print("Upstream: Sent initial greeting trigger")
+
             while True:
                 message = await websocket.receive()
 
                 if "bytes" in message:
-                    # Binary audio data
+                    # Binary audio data (PCM 16-bit, 16kHz mono)
+                    # For Live API, send audio via send_realtime with Blob format
                     audio_chunk = message["bytes"]
-                    await live_request_queue.send_realtime(
-                        genai.types.LiveClientRealtimeInput(
-                            media_chunks=[audio_chunk]
+                    try:
+                        # Wrap audio chunk in Blob object for LiveClientRealtimeInput
+                        # Note: send_realtime is synchronous, not async
+                        live_request_queue.send_realtime(
+                            types.LiveClientRealtimeInput(
+                                mediaChunks=[
+                                    types.Blob(
+                                        mime_type="audio/pcm",
+                                        data=audio_chunk
+                                    )
+                                ]
+                            )
                         )
-                    )
+                    except Exception as e:
+                        print(f"Error sending audio chunk: {e}")
                 elif "text" in message:
                     # JSON message (text, image, etc.)
                     data = json.loads(message["text"])
 
-                    if data["type"] == "text":
-                        await live_request_queue.send_content(
-                            genai.types.Content(
-                                role="user",
-                                parts=[genai.types.Part(text=data["text"])]
-                            )
-                        )
+                    if data["type"] == "activity_start":
+                        # User started talking (push-to-talk pressed)
+                        print("\n>>> User started talking (push-to-talk pressed)")
+                        live_request_queue.send_activity_start()
+                        print(">>> Activity start signal sent to Live API")
+                    elif data["type"] == "activity_end":
+                        # User stopped talking (push-to-talk released)
+                        print("\n>>> User stopped talking (push-to-talk released)")
+                        live_request_queue.send_activity_end()
+                        print(">>> Activity end signal sent to Live API")
+                        print(">>> Waiting for agent response...\n")
                     elif data["type"] == "image":
                         # Decode base64 image
                         image_data = base64.b64decode(data["data"])
-                        await live_request_queue.send_content(
+                        mime_type = data.get("mimeType", "image/jpeg")
+
+                        # Add frame to buffer for monitoring
+                        video_buffer = VideoFrameBuffer()
+                        video_buffer.add_frame(image_data, mime_type)
+
+                        # Log every 10th frame to avoid spam
+                        total_frames = video_buffer.get_total_frames()
+                        if total_frames % 10 == 0:
+                            print(f">>> Video frame #{total_frames} sent to Live API (1 FPS)")
+
+                        # send_content is synchronous
+                        live_request_queue.send_content(
                             genai.types.Content(
                                 role="user",
                                 parts=[
                                     genai.types.Part(
                                         inline_data=genai.types.Blob(
-                                            mime_type=data.get("mimeType", "image/jpeg"),
+                                            mime_type=mime_type,
                                             data=image_data
                                         )
                                     )
@@ -163,22 +218,96 @@ async def websocket_endpoint(
         except Exception as e:
             print(f"Upstream error: {e}")
         finally:
-            await live_request_queue.close()
+            # close is synchronous
+            live_request_queue.close()
 
     async def downstream_task():
         """Receive events from agent and forward to client."""
         try:
+            print(f"Starting run_live for session {session_id}")
+            print(f"Config: streaming_mode={run_config.streaming_mode}, "
+                  f"response_modalities={run_config.response_modalities}, "
+                  f"proactivity={run_config.proactivity}")
+
+            event_count = 0
+            event_type_counts = {}
             async for event in runner.run_live(
                 user_id=user_id,
                 session_id=session_id,
                 live_request_queue=live_request_queue,
                 run_config=run_config,
             ):
+                # Log event for debugging
+                event_count += 1
+                event_type = type(event).__name__
+                event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
+
+                print(f"\n=== Event #{event_count} received: {event_type} ===")
+
+                # Check what's in the event
+                event_data = {}
+                for attr in ['content', 'server_content', 'output_transcription', 'tool_call',
+                            'tool_response', 'turn_complete', 'model_version']:
+                    if hasattr(event, attr):
+                        val = getattr(event, attr)
+                        if val is not None:
+                            event_data[attr] = str(val)[:100]  # First 100 chars
+
+                if event_data:
+                    print(f"Event data: {event_data}")
+                else:
+                    print("Event has no recognized content fields")
+
+                # Print summary every 20 events or on turn_complete
+                if event_count % 20 == 0 or (hasattr(event, 'turn_complete') and event.turn_complete):
+                    print(f"\n--- Event Summary (after {event_count} events) ---")
+                    for etype, count in sorted(event_type_counts.items()):
+                        print(f"  {etype}: {count}")
+                    print("---\n")
+
+                # Check for content field (agent responses)
+                if hasattr(event, 'content') and event.content:
+                    print(f"!!! AGENT CONTENT DETECTED !!!")
+                    print(f"Content type: {type(event.content)}")
+                    if hasattr(event.content, 'parts'):
+                        print(f"Parts count: {len(event.content.parts) if event.content.parts else 0}")
+                        for i, part in enumerate(event.content.parts or []):
+                            if hasattr(part, 'text') and part.text:
+                                print(f"!!! AGENT TEXT RESPONSE: {part.text}")
+                            if hasattr(part, 'inline_data'):
+                                print(f"!!! AGENT AUDIO RESPONSE (inline_data present)")
+
+                if hasattr(event, 'server_content') and event.server_content:
+                    print(f"Server content type: {type(event.server_content)}")
+                    if hasattr(event.server_content, 'model_turn'):
+                        model_turn = event.server_content.model_turn
+                        print(f"Model turn: {model_turn}")
+                        if model_turn and hasattr(model_turn, 'parts'):
+                            parts_count = len(model_turn.parts) if model_turn.parts else 0
+                            print(f"Parts count: {parts_count}")
+                            for i, part in enumerate(model_turn.parts or []):
+                                if hasattr(part, 'text') and part.text:
+                                    print(f"Part {i} text: {part.text[:100]}...")
+                                if hasattr(part, 'inline_data') and part.inline_data:
+                                    print(f"Part {i} has inline_data (audio)")
+
+                if hasattr(event, 'tool_call') and event.tool_call:
+                    print(f"Tool call: {event.tool_call}")
+
+                if hasattr(event, 'tool_response') and event.tool_response:
+                    print(f"Tool response: {event.tool_response}")
+
                 # Serialize event and send to client
                 event_json = event.model_dump_json(exclude_none=True)
+                # Log first 200 chars of JSON to see what's being sent
+                print(f"Sending to client: {event_json[:200]}...")
                 await websocket.send_text(event_json)
+                print("Sent event to client\n")
+
         except Exception as e:
             print(f"Downstream error: {e}")
+            import traceback
+            traceback.print_exc()
 
     # Run upstream and downstream tasks concurrently
     try:
@@ -189,4 +318,5 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         print(f"WebSocket disconnected: user={user_id}, session={session_id}")
     finally:
-        await live_request_queue.close()
+        # close is synchronous
+        live_request_queue.close()

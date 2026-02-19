@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Self-Maintenance Rule
+
+After every major change (new model, new page, new controller, route changes, migration changes, new test files, architectural shifts), update this CLAUDE.md file to reflect the current state. Specifically:
+
+* Add new models/controllers/pages/routes to the relevant tables below
+* Update test count if new tests are added
+* Add any new gotchas or patterns to the "Gotchas & Pitfalls" section
+* Update the "Current State" section if the status changes
+* Keep this file as the single source of truth for AI sessions working on this project
+
 ## Project Overview
 
 Real-time appliance inventory application using **Gemini Live API** with bidirectional video/audio streaming. Users walk through their homes with a camera, and an ADK agent detects appliances, confirms with the user via voice, and captures make/model details.

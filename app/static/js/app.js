@@ -8,6 +8,7 @@ class ApplianceInventoryApp {
         this.connected = false;
         this.userId = `user_${Date.now()}`;
         this.sessionId = `session_${Date.now()}`;
+        this.isTalking = false;
 
         this.videoHandler = new VideoHandler();
         this.audioPlayer = new AudioPlayer();
@@ -20,11 +21,27 @@ class ApplianceInventoryApp {
         document.getElementById('startBtn').addEventListener('click', () => this.startCamera());
         document.getElementById('connectBtn').addEventListener('click', () => this.connect());
         document.getElementById('disconnectBtn').addEventListener('click', () => this.disconnect());
-        document.getElementById('sendBtn').addEventListener('click', () => this.sendText());
         document.getElementById('clearEventsBtn').addEventListener('click', () => this.clearEvents());
 
-        document.getElementById('textInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.sendText();
+        // Push-to-talk button
+        const pushToTalkBtn = document.getElementById('pushToTalkBtn');
+
+        // Handle both mouse and touch events
+        pushToTalkBtn.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            this.startTalking();
+        });
+
+        pushToTalkBtn.addEventListener('pointerup', (e) => {
+            e.preventDefault();
+            this.stopTalking();
+        });
+
+        pushToTalkBtn.addEventListener('pointerleave', (e) => {
+            // If user drags pointer off button while holding, stop talking
+            if (this.isTalking) {
+                this.stopTalking();
+            }
         });
 
         // Video frame callback
@@ -34,9 +51,9 @@ class ApplianceInventoryApp {
             }
         };
 
-        // Audio chunk callback
+        // Audio chunk callback - only send when push-to-talk is active
         this.audioRecorder.onAudioChunk = (chunk) => {
-            if (this.connected && this.ws) {
+            if (this.connected && this.ws && this.isTalking) {
                 this.ws.send(chunk);
             }
         };
@@ -63,11 +80,9 @@ class ApplianceInventoryApp {
                 this.connected = true;
                 document.getElementById('connectBtn').disabled = true;
                 document.getElementById('disconnectBtn').disabled = false;
-                document.getElementById('textInput').disabled = false;
-                document.getElementById('sendBtn').disabled = false;
+                document.getElementById('pushToTalkBtn').disabled = false;
 
-                this.updateStatus('Connected to AI assistant');
-                this.addMessage('agent', 'Hello! I\'m ready to help you catalog your appliances. Just walk around and show me your appliances.');
+                this.updateStatus('Connected to AI assistant - waiting for greeting');
 
                 // Start audio recording
                 this.audioRecorder.start();
@@ -89,8 +104,7 @@ class ApplianceInventoryApp {
                 this.connected = false;
                 document.getElementById('connectBtn').disabled = false;
                 document.getElementById('disconnectBtn').disabled = true;
-                document.getElementById('textInput').disabled = true;
-                document.getElementById('sendBtn').disabled = true;
+                document.getElementById('pushToTalkBtn').disabled = true;
 
                 this.updateStatus('Disconnected');
                 this.audioRecorder.stop();
@@ -113,19 +127,40 @@ class ApplianceInventoryApp {
     handleServerMessage(data) {
         const event = JSON.parse(data);
         this.logEvent(event);
+        console.log('Received event:', event);
 
-        // Handle different event types
-        if (event.server_content?.model_turn?.parts) {
-            const parts = event.server_content.model_turn.parts;
+        // Handle Live API audio/text content
+        if (event.content?.parts) {
+            const parts = event.content.parts;
+            console.log('Content parts:', parts);
             for (const part of parts) {
+                // Handle text responses (especially for text-based interactions)
                 if (part.text) {
-                    this.addMessage('agent', part.text);
+                    console.log('Text from agent (content.parts):', part.text);
+                    // Only show if we haven't already shown via output_transcription
+                    // (output_transcription will have finished:true, content.parts won't)
+                    if (!event.output_transcription) {
+                        this.addMessage('agent', part.text);
+                        this.updateStatus('Agent responded');
+                    }
                 }
                 if (part.inline_data?.data) {
-                    // Audio response
+                    // Audio response (base64 PCM)
+                    console.log('Audio from agent (PCM)');
                     this.audioPlayer.play(part.inline_data.data);
+                    this.updateStatus('Playing audio response');
                 }
             }
+        }
+
+        // Handle output transcription (Live API text)
+        // Only show final transcription to avoid partial/duplicate messages
+        if (event.output_transcription?.text && event.output_transcription.finished === true) {
+            console.log('Final transcription from agent:', event.output_transcription.text);
+            this.addMessage('agent', event.output_transcription.text);
+            this.updateStatus('Agent responded');
+        } else if (event.output_transcription?.text) {
+            console.log('Partial transcription (not displayed):', event.output_transcription.text);
         }
 
         // Handle tool calls
@@ -136,6 +171,24 @@ class ApplianceInventoryApp {
         // Handle tool responses
         if (event.tool_response) {
             this.handleToolResponse(event.tool_response);
+        }
+
+        // Handle legacy server_content format (fallback)
+        if (event.server_content?.model_turn?.parts) {
+            const parts = event.server_content.model_turn.parts;
+            console.log('Model turn parts (legacy):', parts);
+            for (const part of parts) {
+                if (part.text) {
+                    console.log('Text from agent (legacy):', part.text);
+                    this.addMessage('agent', part.text);
+                    this.updateStatus('Agent responded');
+                }
+                if (part.inline_data?.data) {
+                    console.log('Audio from agent (legacy)');
+                    this.audioPlayer.play(part.inline_data.data);
+                    this.updateStatus('Playing audio response');
+                }
+            }
         }
     }
 
@@ -156,19 +209,44 @@ class ApplianceInventoryApp {
         }
     }
 
-    sendText() {
-        const input = document.getElementById('textInput');
-        const text = input.value.trim();
-
-        if (text && this.connected && this.ws) {
-            this.ws.send(JSON.stringify({
-                type: 'text',
-                text: text
-            }));
-
-            this.addMessage('user', text);
-            input.value = '';
+    startTalking() {
+        if (!this.connected || !this.ws || this.isTalking) {
+            return;
         }
+
+        this.isTalking = true;
+        const btn = document.getElementById('pushToTalkBtn');
+        btn.classList.add('active');
+        btn.querySelector('.btn-text').textContent = '🔴 Recording...';
+        btn.querySelector('.btn-hint').textContent = 'Release to send';
+
+        // Send activity_start signal
+        this.ws.send(JSON.stringify({
+            type: 'activity_start'
+        }));
+
+        console.log('Started talking - activity_start signal sent');
+        this.updateStatus('Listening...');
+    }
+
+    stopTalking() {
+        if (!this.connected || !this.ws || !this.isTalking) {
+            return;
+        }
+
+        this.isTalking = false;
+        const btn = document.getElementById('pushToTalkBtn');
+        btn.classList.remove('active');
+        btn.querySelector('.btn-text').textContent = '🎤 Hold to Talk';
+        btn.querySelector('.btn-hint').textContent = 'Press and hold to speak';
+
+        // Send activity_end signal
+        this.ws.send(JSON.stringify({
+            type: 'activity_end'
+        }));
+
+        console.log('Stopped talking - activity_end signal sent');
+        this.updateStatus('Processing...');
     }
 
     sendImage(imageData) {
