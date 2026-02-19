@@ -67,6 +67,17 @@ async def health():
     return {"status": "healthy", "app": APP_NAME}
 
 
+@app.get("/api/inventory")
+async def get_inventory():
+    """Get current appliance inventory."""
+    from app.tools.inventory import ApplianceInventory
+    inventory = ApplianceInventory()
+    return {
+        "total": len(inventory.appliances),
+        "appliances": inventory.appliances
+    }
+
+
 @app.websocket("/ws/{user_id}/{session_id}")
 async def websocket_endpoint(
     websocket: WebSocket,

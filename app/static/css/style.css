@@ -1,0 +1,280 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #333;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    text-align: center;
+    color: white;
+    margin-bottom: 30px;
+}
+
+header h1 {
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+}
+
+main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 20px;
+}
+
+section {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.video-section {
+    grid-column: 1 / 2;
+    grid-row: 1 / 2;
+}
+
+.video-container {
+    position: relative;
+    width: 100%;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+    aspect-ratio: 16 / 9;
+}
+
+#videoElement {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.video-controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-weight: 600;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: #667eea;
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: #5568d3;
+}
+
+.btn-success {
+    background: #48bb78;
+    color: white;
+}
+
+.btn-success:hover:not(:disabled) {
+    background: #38a169;
+}
+
+.btn-danger {
+    background: #f56565;
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #e53e3e;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 0.875rem;
+    background: #e2e8f0;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.status {
+    margin-top: 10px;
+    padding: 10px;
+    background: #edf2f7;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    text-align: center;
+}
+
+.conversation-section {
+    grid-column: 2 / 3;
+    grid-row: 1 / 3;
+    display: flex;
+    flex-direction: column;
+    max-height: 800px;
+}
+
+.conversation-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 15px;
+    background: #f7fafc;
+    border-radius: 8px;
+    margin-bottom: 15px;
+}
+
+.message {
+    margin-bottom: 15px;
+    padding: 10px 15px;
+    border-radius: 8px;
+    max-width: 80%;
+}
+
+.message.user {
+    background: #667eea;
+    color: white;
+    margin-left: auto;
+}
+
+.message.agent {
+    background: #e2e8f0;
+    color: #2d3748;
+}
+
+.input-section {
+    display: flex;
+    gap: 10px;
+}
+
+#textInput {
+    flex: 1;
+    padding: 12px;
+    border: 2px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 1rem;
+}
+
+#textInput:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.inventory-section {
+    grid-column: 1 / 2;
+    grid-row: 2 / 3;
+}
+
+.inventory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.appliance-card {
+    padding: 15px;
+    background: #f7fafc;
+    border-radius: 8px;
+    border-left: 4px solid #667eea;
+}
+
+.appliance-card h3 {
+    margin-bottom: 8px;
+    color: #2d3748;
+}
+
+.appliance-card p {
+    font-size: 0.875rem;
+    color: #718096;
+}
+
+.empty-state {
+    text-align: center;
+    color: #a0aec0;
+    padding: 40px;
+}
+
+.events-section {
+    grid-column: 1 / 3;
+    grid-row: 3 / 4;
+}
+
+.events-section h2 {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.events-console {
+    max-height: 300px;
+    overflow-y: auto;
+    background: #1a202c;
+    color: #e2e8f0;
+    padding: 15px;
+    border-radius: 8px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.875rem;
+}
+
+.event-entry {
+    margin-bottom: 8px;
+    padding: 8px;
+    background: #2d3748;
+    border-radius: 4px;
+    border-left: 3px solid #667eea;
+}
+
+.event-timestamp {
+    color: #a0aec0;
+    font-size: 0.75rem;
+}
+
+@media (max-width: 1024px) {
+    main {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto auto;
+    }
+
+    .video-section {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .conversation-section {
+        grid-column: 1;
+        grid-row: 2;
+        max-height: 500px;
+    }
+
+    .inventory-section {
+        grid-column: 1;
+        grid-row: 3;
+    }
+
+    .events-section {
+        grid-column: 1;
+        grid-row: 4;
+    }
+}
