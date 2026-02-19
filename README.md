@@ -139,7 +139,8 @@ appliance-inventory/
 │   │   ├── agent.py               # ADK agent definition
 │   │   └── tools/
 │   │       ├── __init__.py
-│   │       └── inventory.py           # Inventory management tools
+│   │       ├── inventory.py           # Inventory management tools
+│   │       └── video_monitor.py       # Video monitoring tools
 │   └── static/
 │       ├── index.html             # Main UI
 │       ├── css/style.css
