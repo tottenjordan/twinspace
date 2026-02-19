@@ -24,6 +24,38 @@ class ApplianceInventory:
             ApplianceInventory._initialized = True
 
 
+def detect_appliance(appliance_type: str, tool_context: ToolContext) -> dict[str, Any]:
+    """Record initial detection of an appliance.
+
+    Args:
+        appliance_type: Type of appliance detected (e.g., "refrigerator", "oven").
+        tool_context: ADK tool context for state management.
+
+    Returns:
+        Dictionary with detection status.
+    """
+    inventory = ApplianceInventory()
+
+    # Don't overwrite pending appliance
+    if inventory.pending_appliance is not None:
+        return {
+            "status": "warning",
+            "message": "Already processing an appliance. Finish current one first."
+        }
+
+    inventory.pending_appliance = {
+        "type": appliance_type,
+        "detected_at": datetime.now().isoformat(),
+        "status": "pending_confirmation"
+    }
+
+    return {
+        "status": "detected",
+        "message": f"Ask user if they want to add this {appliance_type}",
+        "appliance_type": appliance_type
+    }
+
+
 def get_inventory_summary() -> dict[str, Any]:
     """Get current inventory summary.
 

@@ -6,6 +6,7 @@ import pytest
 from app.tools.inventory import (
     ApplianceInventory,
     confirm_appliance_detection,
+    detect_appliance,
     get_inventory_summary,
     update_appliance_details,
 )
@@ -34,6 +35,34 @@ def test_inventory_singleton():
     inv2 = ApplianceInventory()
     inv1.appliances.append({"id": 1, "type": "oven"})
     assert len(inv2.appliances) == 1
+
+
+def test_detect_appliance():
+    """Test detecting a new appliance."""
+    inventory = ApplianceInventory()
+    context = MagicMock()
+    context.state = {}
+
+    result = detect_appliance("refrigerator", context)
+
+    assert result["status"] == "detected"
+    assert inventory.pending_appliance is not None
+    assert inventory.pending_appliance["type"] == "refrigerator"
+    assert inventory.pending_appliance["status"] == "pending_confirmation"
+
+
+def test_detect_appliance_already_pending():
+    """Test detecting when another appliance is already pending."""
+    inventory = ApplianceInventory()
+    inventory.pending_appliance = {"type": "oven", "status": "pending_confirmation"}
+
+    context = MagicMock()
+    context.state = {}
+
+    result = detect_appliance("dishwasher", context)
+
+    assert result["status"] == "warning"
+    assert inventory.pending_appliance["type"] == "oven"  # Unchanged
 
 
 def test_confirm_appliance_detection_accept():
