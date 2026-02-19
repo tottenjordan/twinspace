@@ -1,6 +1,6 @@
 import pytest
 
-from app.tools.inventory import ApplianceInventory
+from app.appliance_agent.tools.inventory import ApplianceInventory
 
 
 @pytest.fixture(autouse=True)

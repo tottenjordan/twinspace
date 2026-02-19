@@ -136,10 +136,10 @@ appliance-inventory/
 │   ├── main.py                    # FastAPI app with WebSocket
 │   ├── appliance_agent/
 │   │   ├── __init__.py
-│   │   └── agent.py               # ADK agent definition
-│   ├── tools/
-│   │   ├── __init__.py
-│   │   └── inventory.py           # Inventory management tools
+│   │   ├── agent.py               # ADK agent definition
+│   │   └── tools/
+│   │       ├── __init__.py
+│   │       └── inventory.py           # Inventory management tools
 │   └── static/
 │       ├── index.html             # Main UI
 │       ├── css/style.css

@@ -73,7 +73,7 @@ uv run ruff format .
 
 ## Appliance Detection Workflow
 
-The workflow spans 4 tools in `app/tools/inventory.py` and is orchestrated by the ADK agent:
+The workflow spans 4 tools in `app.appliance_agent.tools/inventory.py` and is orchestrated by the ADK agent:
 
 ### State Machine
 ```
@@ -138,7 +138,7 @@ Tools return structured dicts with `status` field:
 ### Core Application
 - `app/main.py` - FastAPI app, WebSocket endpoint, ADK Runner initialization
 - `app/appliance_agent/agent.py` - ADK agent definition with Gemini Live model
-- `app/tools/inventory.py` - 4 inventory management tools (detect, confirm, update, summary)
+- `app.appliance_agent.tools/inventory.py` - 4 inventory management tools (detect, confirm, update, summary)
 
 ### Frontend
 - `app/static/js/app.js` - Main WebSocket client, event handling, inventory updates
@@ -152,7 +152,7 @@ Tools return structured dicts with `status` field:
 ## Common Development Scenarios
 
 ### Adding a New Tool
-1. Define function in `app/tools/inventory.py` with `ToolContext` parameter
+1. Define function in `app.appliance_agent.tools/inventory.py` with `ToolContext` parameter
 2. Add comprehensive docstring (ADK uses this for tool discovery)
 3. Import and add to `root_agent.tools` list in `app/appliance_agent/agent.py`
 4. Update agent instruction if tool changes workflow

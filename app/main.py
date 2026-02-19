@@ -18,7 +18,7 @@ from google.genai import types
 from google.genai.types import Modality
 
 from app.appliance_agent import root_agent
-from app.tools.video_monitor import VideoFrameBuffer
+from app.appliance_agent.tools.video_monitor import VideoFrameBuffer
 
 # Load environment variables
 load_dotenv()
@@ -72,7 +72,7 @@ async def health():
 @app.get("/api/inventory")
 async def get_inventory():
     """Get current appliance inventory."""
-    from app.tools.inventory import ApplianceInventory
+    from app.appliance_agent.tools.inventory import ApplianceInventory
     inventory = ApplianceInventory()
     return {
         "total": len(inventory.appliances),

@@ -1,13 +1,13 @@
 """ADK agent for appliance inventory management."""
 from google.adk.agents.llm_agent import Agent
 
-from app.tools.inventory import (
+from app.appliance_agent.tools.inventory import (
     confirm_appliance_detection,
     detect_appliance,
     get_inventory_summary,
     update_appliance_details,
 )
-from app.tools.video_monitor import monitor_video_stream, request_frame_analysis
+from app.appliance_agent.tools.video_monitor import monitor_video_stream, request_frame_analysis
 
 # Agent instruction for appliance detection and inventory
 AGENT_INSTRUCTION = """You are an expert home appliance assistant helping users create

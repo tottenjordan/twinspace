@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.tools.inventory import (
+from app.appliance_agent.tools.inventory import (
     ApplianceInventory,
     confirm_appliance_detection,
     detect_appliance,

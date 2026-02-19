@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.tools.video_monitor import (
+from app.appliance_agent.tools.video_monitor import (
     VideoFrameBuffer,
     monitor_video_stream,
     request_frame_analysis,

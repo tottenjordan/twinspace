@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
 from app.appliance_agent import root_agent
-from app.tools.inventory import (
+from app.appliance_agent.tools.inventory import (
     ApplianceInventory,
     confirm_appliance_detection,
     detect_appliance,
