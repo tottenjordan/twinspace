@@ -1,4 +1,4 @@
-"""FastAPI application with WebSocket bidirectional streaming."""
+"""FastAPI application with WebSocket bidirectional streaming using Gemini Live API."""
 import asyncio
 import base64
 import json
@@ -6,38 +6,29 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from google import genai
-from google.adk import Runner
-from google.adk.agents.live_request_queue import LiveRequestQueue
-from google.adk.agents.run_config import RunConfig, StreamingMode
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
-from google.genai.types import Modality
 
-from app.appliance_agent import root_agent
-from app.appliance_agent.tools.video_monitor import VideoFrameBuffer
+from app.gemini_live import GeminiLive
+from app.tools import (
+    ApplianceInventory,
+    confirm_appliance_detection,
+    detect_appliance,
+    get_inventory_summary,
+    mark_user_has_spoken,
+    reset_session,
+    update_appliance_details,
+)
 
 # Load environment variables
 load_dotenv()
-
-APP_NAME = os.getenv("APP_NAME", "appliance-inventory")
 
 # Initialize FastAPI app
 app = FastAPI(
     title="Appliance Inventory Live API",
     description="Real-time appliance detection using Gemini Live API",
-    version="0.1.0"
-)
-
-# Initialize ADK components
-session_service = InMemorySessionService()
-runner = Runner(
-    app_name=APP_NAME,
-    agent=root_agent,
-    session_service=session_service
+    version="0.2.0",
 )
 
 # Static files directory
@@ -47,10 +38,12 @@ STATIC_DIR.mkdir(exist_ok=True)
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# Agent instruction - Keep it simple!
+SYSTEM_INSTRUCTION = """You are a friendly home appliance assistant.
 
-def is_native_audio_model(model_name: str) -> bool:
-    """Check if model uses native audio."""
-    return "native-audio" in model_name.lower()
+Speak naturally and conversationally. Never describe what you're about to say or think out loud.
+
+You help users catalog their home appliances by watching their video feed and asking questions to collect make and model information."""
 
 
 @app.get("/")
@@ -59,272 +52,240 @@ async def index():
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
-    msg = "Appliance Inventory Live API - WebSocket endpoint: /ws/{user_id}/{session_id}"
-    return {"message": msg}
+    return {
+        "message": "Appliance Inventory Live API - WebSocket endpoint: /ws"
+    }
 
 
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "healthy", "app": APP_NAME}
+    return {"status": "healthy"}
 
 
 @app.get("/api/inventory")
 async def get_inventory():
     """Get current appliance inventory."""
-    from app.appliance_agent.tools.inventory import ApplianceInventory
     inventory = ApplianceInventory()
-    return {
-        "total": len(inventory.appliances),
-        "appliances": inventory.appliances
-    }
+    return {"total": len(inventory.appliances), "appliances": inventory.appliances}
 
 
-@app.websocket("/ws/{user_id}/{session_id}")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    user_id: str,
-    session_id: str,
-    proactivity: bool | None = Query(default=True),
-    affective_dialog: bool | None = Query(default=False),
-):
-    """
-    WebSocket endpoint for bidirectional streaming with Live API.
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for bidirectional streaming with Gemini Live API.
 
-    Args:
-        websocket: WebSocket connection
-        user_id: User identifier
-        session_id: Session identifier
-        proactivity: Enable proactive agent behavior
-        affective_dialog: Enable affective/emotional dialog
+    Handles:
+    - Audio input (PCM 16-bit, 16kHz mono)
+    - Video frames (JPEG, 1 FPS)
+    - Push-to-talk activity signals
     """
     await websocket.accept()
+    print("WebSocket connection accepted")
 
-    # Create session explicitly before starting live stream
-    print(f"Creating session: user={user_id}, session={session_id}")
-    await session_service.create_session(
-        app_name=APP_NAME,
-        user_id=user_id,
-        session_id=session_id,
-        state={"user_has_spoken": False}  # Track user interaction for certain tools
-    )
-    print(f"Session created successfully: {session_id}")
+    # Reset session state for new connection
+    reset_session()
 
-    # Determine response modality based on model
-    # Note: Live API only allows ONE response modality
-    # For native audio models, use AUDIO - text transcriptions come via output_transcription
-    model_name = root_agent.model
-    response_modalities = [Modality.AUDIO] if is_native_audio_model(model_name) else [Modality.TEXT]
+    # Create input queues
+    audio_input_queue = asyncio.Queue()
+    video_input_queue = asyncio.Queue()
+    text_input_queue = asyncio.Queue()
 
-    # Create RunConfig for Live API
-    # Note: session_resumption removed so each connection starts fresh
-    run_config = RunConfig(
-        streaming_mode=StreamingMode.BIDI,
-        response_modalities=response_modalities,
-        enable_affective_dialog=affective_dialog,
-    )
-
-    # Disable proactivity for push-to-talk - agent should only respond when user speaks
-    # if proactivity:
-    #     run_config.proactivity = types.ProactivityConfig()
-
-    # Create LiveRequestQueue for message passing
-    live_request_queue = LiveRequestQueue()
-
-    # Send initial greeting to trigger agent introduction
-    live_request_queue.send_content(
-        genai.types.Content(
-            role="user",
-            parts=[genai.types.Part(text="Hi")]
+    # Audio output callback - send audio chunks to client
+    async def audio_output_callback(audio_data: bytes):
+        """Send audio output to client."""
+        # Convert to URL-safe base64 for client
+        base64_audio = base64.b64encode(audio_data).decode("utf-8")
+        print(f">>> Audio output chunk: {len(audio_data)} bytes")
+        await websocket.send_json(
+            {
+                "type": "audio_output",
+                "data": base64_audio,
+            }
         )
+
+    # Interruption callback
+    def on_interrupt():
+        """Handle agent interruption."""
+        print("Agent was interrupted")
+
+    # Create Gemini Live client
+    # Note: Use Live API specific model
+    gemini_live = GeminiLive(
+        model="gemini-2.5-flash-native-audio-preview-12-2025",
+        system_instruction=SYSTEM_INSTRUCTION,
+        tools=[
+            detect_appliance,
+            confirm_appliance_detection,
+            update_appliance_details,
+            get_inventory_summary,
+        ],
+        input_sample_rate=16000,
+        output_sample_rate=24000,
+        voice_name="Puck",
     )
-    print("Sent initial greeting to agent")
 
-    async def upstream_task():
-        """Receive messages from client and forward to agent."""
+    # Track if we're in a conversation turn
+    in_turn = False
+
+    async def receive_from_client():
+        """Receive messages from client and route to appropriate queues."""
+        nonlocal in_turn
         try:
-            print("Upstream: Starting message receive loop...")
-            print("Upstream: Waiting for user input (push-to-talk)...")
-
             while True:
                 message = await websocket.receive()
 
                 if "bytes" in message:
                     # Binary audio data (PCM 16-bit, 16kHz mono)
-                    # For Live API, send audio via send_realtime with Blob format
                     audio_chunk = message["bytes"]
-                    try:
-                        # Wrap audio chunk in Blob object for LiveClientRealtimeInput
-                        # Note: send_realtime is synchronous, not async
-                        live_request_queue.send_realtime(
-                            types.LiveClientRealtimeInput(
-                                mediaChunks=[
-                                    types.Blob(
-                                        mime_type="audio/pcm",
-                                        data=audio_chunk
-                                    )
-                                ]
-                            )
-                        )
-                    except Exception as e:
-                        print(f"Error sending audio chunk: {e}")
+                    print(f">>> Received audio chunk: {len(audio_chunk)} bytes")
+                    await audio_input_queue.put(audio_chunk)
+
                 elif "text" in message:
-                    # JSON message (text, image, etc.)
+                    # JSON message (activity signals, images)
                     data = json.loads(message["text"])
 
                     if data["type"] == "activity_start":
                         # User started talking (push-to-talk pressed)
                         print("\n>>> User started talking (push-to-talk pressed)")
-                        live_request_queue.send_activity_start()
-                        print(">>> Activity start signal sent to Live API")
+                        in_turn = True
+
                     elif data["type"] == "activity_end":
                         # User stopped talking (push-to-talk released)
-                        print("\n>>> User stopped talking (push-to-talk released)")
+                        print(">>> User stopped talking (push-to-talk released)")
 
-                        # Activate the session - allow tools to run now that user has spoken
-                        session = await session_service.get_session(
-                            app_name=APP_NAME,
-                            user_id=user_id,
-                            session_id=session_id
-                        )
-                        session.state["user_has_spoken"] = True
+                        # Mark that user has spoken (enables tool guards)
+                        mark_user_has_spoken()
                         print(">>> Session activated - tools now enabled")
 
-                        live_request_queue.send_activity_end()
-                        print(">>> Activity end signal sent to Live API")
-                        print(">>> Waiting for agent response...\n")
+                        # Signal turn completion to Live API
+                        # Empty string triggers turn_complete signal in send_text()
+                        await text_input_queue.put("")
+                        print(">>> Queued turn completion signal")
+
+                        in_turn = False
+
                     elif data["type"] == "image":
                         # Decode base64 image
                         image_data = base64.b64decode(data["data"])
-                        mime_type = data.get("mimeType", "image/jpeg")
 
-                        # Add frame to buffer for monitoring
-                        video_buffer = VideoFrameBuffer()
-                        video_buffer.add_frame(image_data, mime_type)
+                        # Send to video queue
+                        await video_input_queue.put(image_data)
 
                         # Log every 10th frame to avoid spam
-                        total_frames = video_buffer.get_total_frames()
-                        if total_frames % 10 == 0:
-                            print(f">>> Video frame #{total_frames} sent to Live API (1 FPS)")
+                        frame_count = video_input_queue.qsize()
+                        if frame_count % 10 == 0:
+                            print(f">>> Video frame sent to Live API")
 
-                        # send_content is synchronous
-                        live_request_queue.send_content(
-                            genai.types.Content(
-                                role="user",
-                                parts=[
-                                    genai.types.Part(
-                                        inline_data=genai.types.Blob(
-                                            mime_type=mime_type,
-                                            data=image_data
-                                        )
-                                    )
-                                ]
-                            )
-                        )
         except WebSocketDisconnect:
-            pass
+            print("Client disconnected")
         except Exception as e:
-            print(f"Upstream error: {e}")
-        finally:
-            # close is synchronous
-            live_request_queue.close()
-
-    async def downstream_task():
-        """Receive events from agent and forward to client."""
-        try:
-            print(f"Starting run_live for session {session_id}")
-            print(f"Config: streaming_mode={run_config.streaming_mode}, "
-                  f"response_modalities={run_config.response_modalities}, "
-                  f"proactivity={run_config.proactivity}")
-
-            event_count = 0
-            event_type_counts = {}
-            async for event in runner.run_live(
-                user_id=user_id,
-                session_id=session_id,
-                live_request_queue=live_request_queue,
-                run_config=run_config,
-            ):
-                # Log event for debugging
-                event_count += 1
-                event_type = type(event).__name__
-                event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
-
-                print(f"\n=== Event #{event_count} received: {event_type} ===")
-
-                # Check what's in the event
-                event_data = {}
-                for attr in ['content', 'server_content', 'output_transcription', 'tool_call',
-                            'tool_response', 'turn_complete', 'model_version']:
-                    if hasattr(event, attr):
-                        val = getattr(event, attr)
-                        if val is not None:
-                            event_data[attr] = str(val)[:100]  # First 100 chars
-
-                if event_data:
-                    print(f"Event data: {event_data}")
-                else:
-                    print("Event has no recognized content fields")
-
-                # Print summary every 20 events or on turn_complete
-                if event_count % 20 == 0 or (hasattr(event, 'turn_complete') and event.turn_complete):
-                    print(f"\n--- Event Summary (after {event_count} events) ---")
-                    for etype, count in sorted(event_type_counts.items()):
-                        print(f"  {etype}: {count}")
-                    print("---\n")
-
-                # Check for content field (agent responses)
-                if hasattr(event, 'content') and event.content:
-                    print(f"!!! AGENT CONTENT DETECTED !!!")
-                    print(f"Content type: {type(event.content)}")
-                    if hasattr(event.content, 'parts'):
-                        print(f"Parts count: {len(event.content.parts) if event.content.parts else 0}")
-                        for i, part in enumerate(event.content.parts or []):
-                            if hasattr(part, 'text') and part.text:
-                                print(f"!!! AGENT TEXT RESPONSE: {part.text}")
-                            if hasattr(part, 'inline_data'):
-                                print(f"!!! AGENT AUDIO RESPONSE (inline_data present)")
-
-                if hasattr(event, 'server_content') and event.server_content:
-                    print(f"Server content type: {type(event.server_content)}")
-                    if hasattr(event.server_content, 'model_turn'):
-                        model_turn = event.server_content.model_turn
-                        print(f"Model turn: {model_turn}")
-                        if model_turn and hasattr(model_turn, 'parts'):
-                            parts_count = len(model_turn.parts) if model_turn.parts else 0
-                            print(f"Parts count: {parts_count}")
-                            for i, part in enumerate(model_turn.parts or []):
-                                if hasattr(part, 'text') and part.text:
-                                    print(f"Part {i} text: {part.text[:100]}...")
-                                if hasattr(part, 'inline_data') and part.inline_data:
-                                    print(f"Part {i} has inline_data (audio)")
-
-                if hasattr(event, 'tool_call') and event.tool_call:
-                    print(f"Tool call: {event.tool_call}")
-
-                if hasattr(event, 'tool_response') and event.tool_response:
-                    print(f"Tool response: {event.tool_response}")
-
-                # Serialize event and send to client
-                event_json = event.model_dump_json(exclude_none=True)
-                # Log first 200 chars of JSON to see what's being sent
-                print(f"Sending to client: {event_json[:200]}...")
-                await websocket.send_text(event_json)
-                print("Sent event to client\n")
-
-        except Exception as e:
-            print(f"Downstream error: {e}")
+            print(f"Error in receive_from_client: {e}")
             import traceback
+
+            traceback.print_exc()
+        finally:
+            # Send sentinels to stop sender tasks
+            await audio_input_queue.put(None)
+            await video_input_queue.put(None)
+            await text_input_queue.put(None)
+
+    async def run_session():
+        """Run the Gemini Live session and forward events to client."""
+        try:
+            print("Starting Gemini Live session...")
+
+            # Send initial greeting
+            await text_input_queue.put("Greet the user warmly and let them know you can help catalog their home appliances.")
+            print(">>> Queued initial greeting")
+
+            # Start the session and process events
+            async for event in gemini_live.start_session(
+                audio_input_queue=audio_input_queue,
+                video_input_queue=video_input_queue,
+                text_input_queue=text_input_queue,
+                audio_output_callback=audio_output_callback,
+                on_interrupt=on_interrupt,
+            ):
+                # Forward events to client
+                print(f">>> Event received: {event['type']}")
+
+                if event["type"] == "text_output":
+                    # Send text transcription to client
+                    print(f">>> Text output: {event['text']}")
+                    await websocket.send_json(
+                        {
+                            "type": "text_output",
+                            "text": event["text"],
+                        }
+                    )
+
+                elif event["type"] == "tool_call":
+                    # Send tool call notification
+                    await websocket.send_json(
+                        {
+                            "type": "tool_call",
+                            "function_name": event["function_name"],
+                            "args": event["args"],
+                        }
+                    )
+
+                    # If tool completed an appliance, notify client to refresh
+                    if (
+                        event["function_name"] == "update_appliance_details"
+                        and event["result"].get("status") == "completed"
+                    ):
+                        await websocket.send_json(
+                            {
+                                "type": "inventory_updated",
+                                "total": event["result"]["total_appliances"],
+                            }
+                        )
+
+                elif event["type"] == "turn_complete":
+                    await websocket.send_json({"type": "turn_complete"})
+
+                elif event["type"] == "interrupted":
+                    await websocket.send_json({"type": "interrupted"})
+
+                elif event["type"] == "setup_complete":
+                    await websocket.send_json({"type": "setup_complete"})
+
+                elif event["type"] == "error":
+                    # Log and forward error
+                    print(f"!!! ERROR EVENT: {event.get('error', 'Unknown error')}")
+                    await websocket.send_json(event)
+
+        except Exception as e:
+            print(f"Error in run_session: {e}")
+            import traceback
+
             traceback.print_exc()
 
-    # Run upstream and downstream tasks concurrently
+    # Run both tasks concurrently
+    receive_task = None
     try:
-        await asyncio.gather(
-            upstream_task(),
-            downstream_task(),
-        )
+        receive_task = asyncio.create_task(receive_from_client())
+        await run_session()
     except WebSocketDisconnect:
-        print(f"WebSocket disconnected: user={user_id}, session={session_id}")
+        print("WebSocket disconnected")
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        import traceback
+
+        traceback.print_exc()
     finally:
-        # close is synchronous
-        live_request_queue.close()
+        # Cancel receive task if still running
+        if receive_task and not receive_task.done():
+            receive_task.cancel()
+            try:
+                await receive_task
+            except asyncio.CancelledError:
+                pass
+
+        # Close WebSocket
+        try:
+            await websocket.close()
+        except:
+            pass
+
+        print("WebSocket connection closed")

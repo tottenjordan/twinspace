@@ -1,22 +1,39 @@
 export class AudioPlayer {
     constructor() {
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        // Create AudioContext with 24kHz sample rate to match Live API output
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: 24000
+        });
         this.queue = [];
         this.playing = false;
     }
 
     async play(base64Data) {
-        try {
-            console.log(`Attempting to play audio (${base64Data.length} chars of base64)`);
+        // Add to queue
+        this.queue.push(base64Data);
 
+        // Start playing if not already
+        if (!this.playing) {
+            this.playing = true;
+            await this.playNext();
+        }
+    }
+
+    async playNext() {
+        if (this.queue.length === 0) {
+            this.playing = false;
+            return;
+        }
+
+        const base64Data = this.queue.shift();
+
+        try {
             // Resume AudioContext if suspended (browser autoplay policy)
             if (this.audioContext.state === 'suspended') {
-                console.log('Resuming suspended AudioContext...');
                 await this.audioContext.resume();
             }
 
             // Convert URL-safe base64 to standard base64
-            // Live API uses URL-safe base64 (- and _ instead of + and /)
             let standardBase64 = base64Data.replace(/-/g, '+').replace(/_/g, '/');
 
             // Add padding if needed
@@ -31,41 +48,49 @@ export class AudioPlayer {
                 bytes[i] = binaryString.charCodeAt(i);
             }
 
-            // Live API sends raw PCM 16-bit mono at 24kHz
-            // Convert Int16 PCM to Float32 for Web Audio API
+            // Verify we have valid data
+            if (bytes.length === 0 || bytes.length % 2 !== 0) {
+                console.error('Invalid audio data length:', bytes.length);
+                this.playNext();
+                return;
+            }
+
+            // Live API sends raw PCM 16-bit little-endian mono at 24kHz
             const pcmData = new Int16Array(bytes.buffer);
-            const sampleRate = 24000; // Live API native audio sample rate
+            const sampleRate = 24000;
             const numSamples = pcmData.length;
 
-            console.log(`PCM data: ${numSamples} samples at ${sampleRate}Hz = ${numSamples/sampleRate}s duration`);
+            if (numSamples === 0) {
+                console.error('No audio samples decoded');
+                this.playNext();
+                return;
+            }
 
             // Create AudioBuffer
-            const audioBuffer = this.audioContext.createBuffer(
-                1,              // mono
-                numSamples,
-                sampleRate
-            );
+            const audioBuffer = this.audioContext.createBuffer(1, numSamples, sampleRate);
 
             // Convert Int16 to Float32 (-1.0 to 1.0)
             const channelData = audioBuffer.getChannelData(0);
             for (let i = 0; i < numSamples; i++) {
-                channelData[i] = pcmData[i] / 32768.0; // Convert to -1.0 to 1.0 range
+                channelData[i] = pcmData[i] / 32768.0;
             }
 
-            // Create source and play
+            // Create source and play immediately
             const source = this.audioContext.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(this.audioContext.destination);
 
+            // Play next chunk when this one ends
             source.onended = () => {
-                console.log('Audio playback finished');
+                this.playNext();
             };
 
             source.start(0);
-            console.log(`✅ Audio playback started (${(numSamples/sampleRate).toFixed(1)}s)`);
+
         } catch (error) {
-            console.error('❌ Audio playback error:', error);
-            alert(`Audio error: ${error.message}. Check console for details.`);
+            console.error('Audio playback error:', error);
+            // Continue with next chunk even if this one failed
+            this.playNext();
         }
     }
 }

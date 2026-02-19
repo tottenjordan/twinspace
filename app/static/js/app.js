@@ -6,8 +6,6 @@ class ApplianceInventoryApp {
     constructor() {
         this.ws = null;
         this.connected = false;
-        this.userId = `user_${Date.now()}`;
-        this.sessionId = `session_${Date.now()}`;
         this.isTalking = false;
 
         this.videoHandler = new VideoHandler();
@@ -71,9 +69,7 @@ class ApplianceInventoryApp {
     }
 
     async connect() {
-        // Generate new session ID for each connection to start fresh
-        this.sessionId = `session_${Date.now()}`;
-        const wsUrl = `ws://${window.location.host}/ws/${this.userId}/${this.sessionId}`;
+        const wsUrl = `ws://${window.location.host}/ws`;
 
         try {
             this.ws = new WebSocket(wsUrl);
@@ -84,7 +80,7 @@ class ApplianceInventoryApp {
                 document.getElementById('disconnectBtn').disabled = false;
                 document.getElementById('pushToTalkBtn').disabled = false;
 
-                this.updateStatus('Connected and ready - Agent is listening');
+                this.updateStatus('Connected - Waiting for agent greeting...');
 
                 // Start audio recording
                 this.audioRecorder.start();
@@ -131,86 +127,58 @@ class ApplianceInventoryApp {
         this.logEvent(event);
         console.log('Received event:', event);
 
-        // Handle Live API audio/text content
-        if (event.content?.parts) {
-            const parts = event.content.parts;
-            console.log('Content parts:', parts);
-            for (const part of parts) {
-                // Handle text responses (especially for text-based interactions)
-                if (part.text) {
-                    console.log('Text from agent (content.parts):', part.text);
-                    // Only show if we haven't already shown via output_transcription
-                    // (output_transcription will have finished:true, content.parts won't)
-                    if (!event.output_transcription) {
-                        this.addMessage('agent', part.text);
-                        this.updateStatus('Agent responded');
-                    }
-                }
-                if (part.inline_data?.data) {
-                    // Audio response (base64 PCM)
-                    console.log('Audio from agent (PCM)');
-                    this.audioPlayer.play(part.inline_data.data);
-                    this.updateStatus('Playing audio response');
-                }
-            }
-        }
+        // Handle different event types from new backend
+        switch (event.type) {
+            case 'text_output':
+                // Agent text response
+                console.log('Text from agent:', event.text);
+                this.addMessage('agent', event.text);
+                this.updateStatus('Agent responded');
+                break;
 
-        // Handle output transcription (Live API text)
-        // Only show final transcription to avoid partial/duplicate messages
-        // Filter out empty transcriptions
-        if (event.output_transcription?.text &&
-            event.output_transcription.finished === true &&
-            event.output_transcription.text.trim().length > 0) {
-            console.log('Final transcription from agent:', event.output_transcription.text);
-            this.addMessage('agent', event.output_transcription.text);
-            this.updateStatus('Agent responded');
-        } else if (event.output_transcription?.text) {
-            console.log('Partial transcription (not displayed):', event.output_transcription.text);
-        }
+            case 'audio_output':
+                // Agent audio response (base64 PCM)
+                console.log('Audio from agent');
+                this.audioPlayer.play(event.data);
+                this.updateStatus('Playing audio response');
+                break;
 
-        // Handle tool calls
-        if (event.tool_call) {
-            this.handleToolCall(event.tool_call);
-        }
+            case 'tool_call':
+                // Tool was called
+                console.log('Tool call:', event.function_name, event.args);
+                this.logEvent({
+                    type: 'tool_call',
+                    name: event.function_name,
+                    args: event.args
+                });
+                break;
 
-        // Handle tool responses
-        if (event.tool_response) {
-            this.handleToolResponse(event.tool_response);
-        }
+            case 'inventory_updated':
+                // Inventory was updated, refresh UI
+                console.log('Inventory updated, total:', event.total);
+                this.updateInventory();
+                break;
 
-        // Handle legacy server_content format (fallback)
-        if (event.server_content?.model_turn?.parts) {
-            const parts = event.server_content.model_turn.parts;
-            console.log('Model turn parts (legacy):', parts);
-            for (const part of parts) {
-                if (part.text) {
-                    console.log('Text from agent (legacy):', part.text);
-                    this.addMessage('agent', part.text);
-                    this.updateStatus('Agent responded');
-                }
-                if (part.inline_data?.data) {
-                    console.log('Audio from agent (legacy)');
-                    this.audioPlayer.play(part.inline_data.data);
-                    this.updateStatus('Playing audio response');
-                }
-            }
-        }
-    }
+            case 'turn_complete':
+                // Conversation turn completed
+                console.log('Turn complete');
+                this.updateStatus('Ready - Hold button to talk');
+                break;
 
-    handleToolCall(toolCall) {
-        const toolName = toolCall.function_calls?.[0]?.name;
-        this.logEvent({ type: 'tool_call', name: toolName });
-    }
+            case 'interrupted':
+                // Agent was interrupted
+                console.log('Agent interrupted');
+                this.updateStatus('Interrupted');
+                break;
 
-    handleToolResponse(toolResponse) {
-        const responses = toolResponse.function_responses || [];
-        for (const response of responses) {
-            if (response.response) {
-                const data = JSON.parse(response.response);
-                if (data.status === 'completed' && data.total_appliances) {
-                    this.updateInventory();
-                }
-            }
+            case 'setup_complete':
+                // Session setup complete
+                console.log('Setup complete');
+                this.updateStatus('Ready - Agent is listening');
+                break;
+
+            default:
+                console.log('Unknown event type:', event.type);
         }
     }
 
@@ -287,7 +255,7 @@ class ApplianceInventoryApp {
         entry.className = 'event-entry';
 
         const timestamp = new Date().toLocaleTimeString();
-        const eventType = event.type || event.server_content?.model_turn ? 'model_turn' : 'unknown';
+        const eventType = event.type || 'unknown';
 
         entry.innerHTML = `
             <div class="event-timestamp">${timestamp}</div>

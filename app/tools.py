@@ -1,9 +1,7 @@
-"""Appliance inventory management tools."""
+"""Appliance inventory management tools for Gemini Live API."""
 import uuid
 from datetime import datetime
 from typing import Any
-
-from google.adk.tools.tool_context import ToolContext
 
 
 class ApplianceInventory:
@@ -24,21 +22,27 @@ class ApplianceInventory:
             ApplianceInventory._initialized = True
 
 
-def detect_appliance(appliance_type: str, tool_context: ToolContext) -> dict[str, Any]:
+# Global session state
+_session_state = {
+    "user_has_spoken": False,
+    "current_appliance_id": None,
+}
+
+
+def detect_appliance(appliance_type: str) -> dict[str, Any]:
     """Record initial detection of an appliance.
 
     Args:
         appliance_type: Type of appliance detected (e.g., "refrigerator", "oven").
-        tool_context: ADK tool context for state management.
 
     Returns:
         Dictionary with detection status.
     """
     # GUARD: Only allow detection after user has spoken
-    if not tool_context.state.get("user_has_spoken", False):
+    if not _session_state.get("user_has_spoken", False):
         return {
             "status": "error",
-            "message": "Wait for user to speak before detecting appliances."
+            "message": "Wait for user to speak before detecting appliances.",
         }
 
     inventory = ApplianceInventory()
@@ -47,36 +51,33 @@ def detect_appliance(appliance_type: str, tool_context: ToolContext) -> dict[str
     if inventory.pending_appliance is not None:
         return {
             "status": "warning",
-            "message": "Already processing an appliance. Finish current one first."
+            "message": "Already processing an appliance. Finish current one first.",
         }
 
     inventory.pending_appliance = {
         "type": appliance_type,
         "detected_at": datetime.now().isoformat(),
-        "status": "pending_confirmation"
+        "status": "pending_confirmation",
     }
 
     return {
         "status": "detected",
         "message": f"Ask user if they want to add this {appliance_type}",
-        "appliance_type": appliance_type
+        "appliance_type": appliance_type,
     }
 
 
-def get_inventory_summary(tool_context: ToolContext) -> dict[str, Any]:
-    """Get current inventory summary.
-
-    Args:
-        tool_context: ADK tool context for state management.
+def get_inventory_summary() -> dict[str, Any]:
+    """Get current appliance inventory summary.
 
     Returns:
         Dictionary containing total count and appliance list.
     """
     # GUARD: Only allow if user has explicitly asked
-    if not tool_context.state.get("user_has_spoken", False):
+    if not _session_state.get("user_has_spoken", False):
         return {
             "status": "error",
-            "message": "Wait for user to speak before checking inventory."
+            "message": "Wait for user to speak before checking inventory.",
         }
 
     inventory = ApplianceInventory()
@@ -87,15 +88,11 @@ def get_inventory_summary(tool_context: ToolContext) -> dict[str, Any]:
     }
 
 
-def confirm_appliance_detection(
-    user_wants_to_capture: bool,
-    tool_context: ToolContext
-) -> dict[str, Any]:
+def confirm_appliance_detection(user_wants_to_capture: bool) -> dict[str, Any]:
     """Confirm whether to add detected appliance to inventory.
 
     Args:
         user_wants_to_capture: True if user confirms detection, False to skip.
-        tool_context: ADK tool context for state management.
 
     Returns:
         Dictionary with confirmation status and next steps.
@@ -103,10 +100,7 @@ def confirm_appliance_detection(
     inventory = ApplianceInventory()
 
     if inventory.pending_appliance is None:
-        return {
-            "status": "error",
-            "message": "No pending appliance to confirm"
-        }
+        return {"status": "error", "message": "No pending appliance to confirm"}
 
     if user_wants_to_capture:
         # Generate unique ID and move to needs_details state
@@ -115,47 +109,39 @@ def confirm_appliance_detection(
         inventory.pending_appliance["status"] = "needs_details"
         inventory.pending_appliance["confirmed_at"] = datetime.now().isoformat()
 
-        # Store in context for follow-up
-        tool_context.state["current_appliance_id"] = appliance_id
+        # Store in state for follow-up
+        _session_state["current_appliance_id"] = appliance_id
 
         return {
             "status": "confirmed",
             "appliance_id": appliance_id,
             "message": "Please ask user for make and model information",
-            "appliance_type": inventory.pending_appliance["type"]
+            "appliance_type": inventory.pending_appliance["type"],
         }
     else:
         # User rejected, clear pending
         inventory.pending_appliance = None
-        return {
-            "status": "rejected",
-            "message": "Appliance skipped, continuing to scan"
-        }
+        return {"status": "rejected", "message": "Appliance skipped, continuing to scan"}
 
 
-def update_appliance_details(
-    make: str,
-    model: str,
-    tool_context: ToolContext
-) -> dict[str, Any]:
+def update_appliance_details(make: str, model: str) -> dict[str, Any]:
     """Update pending appliance with make and model information.
 
     Args:
         make: Manufacturer/brand name.
         model: Model number or identifier.
-        tool_context: ADK tool context for state management.
 
     Returns:
         Dictionary with update status and appliance details.
     """
     inventory = ApplianceInventory()
-    appliance_id = tool_context.state.get("current_appliance_id")
+    appliance_id = _session_state.get("current_appliance_id")
 
-    if inventory.pending_appliance is None or inventory.pending_appliance.get("id") != appliance_id:
-        return {
-            "status": "error",
-            "message": "No matching pending appliance found"
-        }
+    if (
+        inventory.pending_appliance is None
+        or inventory.pending_appliance.get("id") != appliance_id
+    ):
+        return {"status": "error", "message": "No matching pending appliance found"}
 
     # Update with details
     inventory.pending_appliance["make"] = make
@@ -167,12 +153,25 @@ def update_appliance_details(
     inventory.appliances.append(inventory.pending_appliance.copy())
     inventory.pending_appliance = None
 
-    # Clear from context (State doesn't have pop, use del if key exists)
-    if "current_appliance_id" in tool_context.state:
-        del tool_context.state["current_appliance_id"]
+    # Clear from state
+    _session_state["current_appliance_id"] = None
 
     return {
         "status": "completed",
         "message": f"Added {make} {model} to inventory",
-        "total_appliances": len(inventory.appliances)
+        "total_appliances": len(inventory.appliances),
+    }
+
+
+def mark_user_has_spoken():
+    """Mark that the user has spoken (for guard checks)."""
+    _session_state["user_has_spoken"] = True
+
+
+def reset_session():
+    """Reset session state for new connection."""
+    global _session_state
+    _session_state = {
+        "user_has_spoken": False,
+        "current_appliance_id": None,
     }
