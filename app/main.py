@@ -1,20 +1,21 @@
 """FastAPI application with WebSocket bidirectional streaming."""
+import asyncio
+import base64
+import json
 import os
 from pathlib import Path
-import json
-import base64
-import asyncio
-from typing import Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+
 from dotenv import load_dotenv
-from google.adk import Runner
-from google.adk.sessions import InMemorySessionService
-from google.adk.agents.run_config import RunConfig, StreamingMode
-from google.adk.agents.live_request_queue import LiveRequestQueue
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from google import genai
+from google.adk import Runner
+from google.adk.agents.live_request_queue import LiveRequestQueue
+from google.adk.agents.run_config import RunConfig, StreamingMode
+from google.adk.sessions import InMemorySessionService
 from google.genai import types
+
 from app.appliance_agent import root_agent
 
 # Load environment variables
@@ -56,7 +57,8 @@ async def index():
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
-    return {"message": "Appliance Inventory Live API - WebSocket endpoint: /ws/{user_id}/{session_id}"}
+    msg = "Appliance Inventory Live API - WebSocket endpoint: /ws/{user_id}/{session_id}"
+    return {"message": msg}
 
 
 @app.get("/health")
@@ -70,8 +72,8 @@ async def websocket_endpoint(
     websocket: WebSocket,
     user_id: str,
     session_id: str,
-    proactivity: Optional[bool] = Query(default=False),
-    affective_dialog: Optional[bool] = Query(default=False),
+    proactivity: bool | None = Query(default=False),
+    affective_dialog: bool | None = Query(default=False),
 ):
     """
     WebSocket endpoint for bidirectional streaming with Live API.

@@ -1,12 +1,12 @@
 # tests/test_websocket.py
 import pytest
 from fastapi.testclient import TestClient
+
 from app.main import app
 
 
 def test_app_initialization():
     """Test that FastAPI app initializes."""
-    client = TestClient(app)
     assert app.title == "Appliance Inventory Live API"
 
 
