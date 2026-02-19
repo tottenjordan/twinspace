@@ -13,6 +13,8 @@ Real-time appliance detection and inventory management using Gemini Live API wit
 
 ## Architecture
 
+![Architecture Diagram](docs/architecture/twinspace_architecture.png)
+
 ```
 ┌─────────────────┐
 │   Web Browser   │
