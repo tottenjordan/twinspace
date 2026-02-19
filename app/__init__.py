@@ -1,0 +1,1 @@
+"""Appliance Inventory Application."""
