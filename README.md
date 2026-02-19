@@ -151,6 +151,8 @@ appliance-inventory/
 │           ├── audio-recorder.js  # Audio recording
 │           └── pcm-recorder-processor.js
 ├── docs/
+│   └── plans/
+│       └── 2026-02-19-appliance-inventory-live-video.md
 ├── tests/
 │   ├── conftest.py
 │   ├── test_inventory_tool.py
