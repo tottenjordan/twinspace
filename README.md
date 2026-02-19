@@ -150,6 +150,7 @@ appliance-inventory/
 │           ├── audio-player.js    # Audio playback
 │           ├── audio-recorder.js  # Audio recording
 │           └── pcm-recorder-processor.js
+├── docs/
 ├── tests/
 │   ├── conftest.py
 │   ├── test_inventory_tool.py
