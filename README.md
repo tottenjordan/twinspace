@@ -83,6 +83,22 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Navigate to: http://localhost:8000
 
+## Running with ADK
+
+You can also run the agent using the Agent Development Kit (ADK) CLI:
+
+### 1. Run via CLI
+
+```bash
+uv run adk run app.appliance_agent
+```
+
+### 2. Run via Web Interface
+
+```bash
+uv run adk web app.appliance_agent --port 8000
+```
+
 ## Usage
 
 1. **Start Camera**: Click "Start Camera" to activate your device camera
